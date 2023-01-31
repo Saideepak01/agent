@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/grafana/agent/pkg/river/ast"
+	"github.com/grafana/agent/pkg/river/diag"
 	"github.com/grafana/agent/pkg/river/parser"
 	"github.com/grafana/agent/pkg/river/vm"
 	"github.com/stretchr/testify/require"
@@ -78,28 +79,63 @@ func TestVM_Block_Attributes(t *testing.T) {
 		eval := vm.New(parseBlock(t, input))
 
 		err := eval.Evaluate(nil, &block{})
-		require.EqualError(t, err, `"number" must be an attribute, but is used as a block`)
+		require.EqualError(t, err, `2:4: "number" must be an attribute, but is used as a block`)
 	})
 
 	t.Run("Fails if attribute used as block 2", func(t *testing.T) {
-		type innerBlock struct {
-		}
-
 		type block struct {
-			Number1 int        `river:"number1,block"`
-			Number2 innerBlock `river:"number2,attr"`
-			Number3 int        `river:"number3,block"`
+			Prop2 int `river:"prop1,attr"`
 		}
 
 		input := `some_block {
-			number1 {}
-			number2 {} 
-			number3 {}
+			prop1 {}
+			prop1 = 2
+			prop1 {}
 		}`
 		eval := vm.New(parseBlock(t, input))
 
 		err := eval.Evaluate(nil, &block{})
-		require.EqualError(t, err, `"number" must be an attribute, but is used as a block`)
+		require.EqualError(t, err, `2:4: "prop1" must be an attribute, but is used as a block`)
+
+		diag := err.(diag.Diagnostic)
+		require.Equal(t, diag.EndPos.String(), "2:11")
+	})
+
+	t.Run("Fails if a required attribute is missing", func(t *testing.T) {
+		type block struct {
+			Prop1 int `river:"prop1,attr"`
+			Prop2 int `river:"prop2,attr"`
+		}
+
+		input := `some_block {
+			prop1 = 2
+		}`
+		eval := vm.New(parseBlock(t, input))
+
+		err := eval.Evaluate(nil, &block{})
+		require.EqualError(t, err, `1:1: missing required attribute "prop2"`)
+
+		diag := err.(diag.Diagnostic)
+		require.Equal(t, diag.EndPos.String(), "3:3")
+	})
+
+	t.Run("Fails if a block is used as an attribute", func(t *testing.T) {
+		type innerBlock struct{}
+
+		type block struct {
+			Prop2 innerBlock `river:"prop2,block"`
+		}
+
+		input := `some_block {
+			prop2 = 2
+		}`
+		eval := vm.New(parseBlock(t, input))
+
+		err := eval.Evaluate(nil, &block{})
+		require.EqualError(t, err, `2:4: "prop2" must be a block, but is used as an attribute`)
+
+		diag := err.(diag.Diagnostic)
+		require.Equal(t, diag.EndPos.String(), "2:12")
 	})
 
 	t.Run("Fails if required attributes are not present", func(t *testing.T) {
@@ -256,7 +292,7 @@ func TestVM_Block_Children_Blocks(t *testing.T) {
 		eval := vm.New(parseBlock(t, input))
 
 		err := eval.Evaluate(nil, &block{})
-		require.EqualError(t, err, `"child" must be a block, but is used as an attribute`)
+		require.EqualError(t, err, `2:4: "child" must be a block, but is used as an attribute`)
 	})
 
 	t.Run("Fails if required children blocks are not present", func(t *testing.T) {

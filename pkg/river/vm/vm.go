@@ -2,6 +2,7 @@
 package vm
 
 import (
+	"errors"
 	"fmt"
 	"reflect"
 	"strings"
@@ -173,32 +174,59 @@ func (vm *Evaluator) evaluateBlockOrBody(scope *Scope, assoc map[value.Value]ast
 			continue
 
 		case tf.IsAttr() && len(blocks) > 0:
-			//return fmt.Errorf("%q must be an attribute, but is used as a block", fullName)
+			// There should be no blocks with this name, so report the location
+			// of the first one that we found.
 			return diag.Diagnostic{
 				Severity: diag.SeverityLevelError,
 				StartPos: ast.StartPos(blocks[0]).Position(),
-				EndPos:   ast.EndPos(blocks[len(blocks)-1]).Position(),
+				EndPos:   ast.EndPos(blocks[0]).Position(),
 				Message:  fmt.Sprintf("%q must be an attribute, but is used as a block", fullName),
 			}
 		case tf.IsAttr() && len(attrs) == 0 && !tf.IsOptional():
-			return fmt.Errorf("missing required attribute %q", fullName)
+			return diag.Diagnostic{
+				Severity: diag.SeverityLevelError,
+				StartPos: ast.StartPos(node).Position(),
+				EndPos:   ast.EndPos(node).Position(),
+				Message:  fmt.Sprintf("missing required attribute %q", fullName),
+			}
 		case tf.IsAttr() && len(attrs) > 1:
 			// While blocks may be specified multiple times (when the struct field
-			// accepts a slice or an array), attributes may only ever be specified
-			// once.
-			return fmt.Errorf("attribute %q may only be set once", fullName)
+			// accepts a slice or an array), attributes may only ever be specified once.
+			// Report the second time when the attribute is used.
+			return diag.Diagnostic{
+				Severity: diag.SeverityLevelError,
+				StartPos: ast.StartPos(attrs[1]).Position(),
+				EndPos:   ast.EndPos(attrs[1]).Position(),
+				Message:  fmt.Sprintf("attribute %q may only be set once", fullName),
+			}
 
 		case tf.IsBlock() && len(attrs) > 0:
-			return fmt.Errorf("%q must be a block, but is used as an attribute", fullName)
+			return diag.Diagnostic{
+				Severity: diag.SeverityLevelError,
+				StartPos: ast.StartPos(attrs[0]).Position(),
+				EndPos:   ast.EndPos(attrs[0]).Position(),
+				Message:  fmt.Sprintf("%q must be a block, but is used as an attribute", fullName),
+			}
 		case tf.IsBlock() && len(blocks) == 0 && !tf.IsOptional():
 			// TODO(rfratto): does it ever make sense for children blocks to be required?
-			return fmt.Errorf("missing required block %q", fullName)
+			return diag.Diagnostic{
+				Severity: diag.SeverityLevelError,
+				StartPos: ast.StartPos(node).Position(),
+				EndPos:   ast.EndPos(node).Position(),
+				Message:  fmt.Sprintf("missing required block %q", fullName),
+			}
 
 		case len(attrs) > 0 && len(blocks) > 0:
 			// NOTE(rfratto): it's not possible to reach this condition given the
 			// statements above, but this is left in defensively in case there is a
-			// bug with the validity checks.
-			return fmt.Errorf("%q may only be used as a block or an attribute, but found both", fullName)
+			// bug with the validity checks
+
+			return diag.Diagnostic{
+				Severity: diag.SeverityLevelError,
+				StartPos: ast.StartPos(node).Position(),
+				EndPos:   ast.EndPos(node).Position(),
+				Message:  fmt.Sprintf("%q may only be used as a block or an attribute, but found both", fullName),
+			}
 		}
 
 		field := rv.FieldByIndex(tf.Index)
@@ -219,7 +247,17 @@ func (vm *Evaluator) evaluateBlockOrBody(scope *Scope, assoc map[value.Value]ast
 					decodeElement := prepareDecodeValue(decodeField.Index(i))
 					err := vm.evaluateBlockOrBody(scope, assoc, block, decodeElement)
 					if err != nil {
-						return err
+						var evalDiags diag.Diagnostics
+						if errors.As(err, &evalDiags) {
+							return err
+						} else {
+							return diag.Diagnostic{
+								Severity: diag.SeverityLevelError,
+								Message:  fmt.Sprintf("Failed ot evaluate block: %s", err),
+								StartPos: ast.StartPos(block).Position(),
+								EndPos:   ast.EndPos(block).Position(),
+							}
+						}
 					}
 				}
 
